@@ -7,7 +7,7 @@ With this WordPress plugin you are able to create posts generated automatically 
 - Basic ChatGPT Integration
 - Pasta carbonara blog post example
 
-**Upcoming update**
+**Upcoming changes**
 - 
 - Multiple topic auto generated 
 - Publications by cronjob
