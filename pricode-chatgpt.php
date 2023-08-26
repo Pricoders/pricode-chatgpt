@@ -43,6 +43,7 @@ function pricode_chatgpt_get_content( $prompt ){
 function pricode_chatgpt_create_post( $prompt ){
     
     $content = pricode_chatgpt_get_content( $prompt );
+    
     $blog_response = json_decode($content->choices[0]->message->content);
     
     error_log( print_r($blog_response,true ) );
@@ -72,9 +73,8 @@ function pricode_chatgpt_create_post( $prompt ){
       'post_content'  => $content,
       'post_status'   => 'publish',
       'post_author'   => 1
-  );
+    );
     return wp_insert_post( $new_post );
-
     
 }
 
@@ -113,25 +113,25 @@ function pricode_chatgpt_register_settings(){
 }
 
 function pricode_chatgpt_settings_callback(){
-?>
+    ?>
     <h1>Settings</h1>
     <form method="post" action="options.php">
         <?php settings_fields( 'pricode-chatgpt-settings-group' ); ?>
         <?php do_settings_sections( 'pricode-chatgpt-settings-group' ); ?>
         <input type="password" name="pricode_chatgpt_api_key" value="<?php echo esc_attr( get_option('pricode_chatgpt_api_key') ); ?>" />
-       <?php submit_button(); ?>
-   </form>
-<?php
+        <?php submit_button(); ?>
+    </form>
+    <?php
 }
 
 function pricode_chatgpt_publish_post_callback(){
-?>
+    ?>
     <h1>Chat with ChatGPT</h1>
     <form id="pricode-chatgpt-form">
-    <p><input type="text" class="prompt" name="prompt" id="pricode-chatgpt-prompt" maxlength="200" placeholder='Hi can you please write a blog about...'/></p>
-    <?php wp_nonce_field('pricode_publish_post', 'pricode_publish_post_nonce') ?>
-    <p><button id="publish-post-button">Publish post</button></p>
-    <small id="chatgpt-response"><b>Response:</b> <span></span></small>
+        <p><input type="text" class="prompt" name="prompt" id="pricode-chatgpt-prompt" maxlength="200" placeholder='Hi can you please write a blog about...'/></p>
+        <?php wp_nonce_field('pricode_publish_post', 'pricode_publish_post_nonce') ?>
+        <p><button id="publish-post-button">Publish post</button></p>
+        <small id="chatgpt-response"><b>Response:</b> <span></span></small>
     </form>
     
     <script>
@@ -162,7 +162,7 @@ function pricode_chatgpt_publish_post_callback(){
         .success{color: green}
         .prompt{width: 90%}
     </style>
-<?php
+    <?php
 
 }
 add_action('wp_ajax_pricode_publish_post', 'pricode_chatgpt_ajax_response');
@@ -176,10 +176,66 @@ function pricode_chatgpt_ajax_response(){
         return wp_send_json( ['success' => false, 'message' => 'empty prompt'] );    
     }
 
-    $response = pricode_chatgpt_create_post( $data['prompt'] . '. Please use the following json format { title, content: [ { heading, [paragraphs] } ] }' );
-    if( is_wp_error( $response ) ){
+    $new_post_id = pricode_chatgpt_create_post( trim($data['prompt']) . '. Please use the following json format { title, content: [ { heading, [paragraphs] } ] }' );
+    if( is_wp_error( $new_post_id ) ){
         return wp_send_json( ['success' => false, 'message' => 'Something went wrong'] );    
     }
+    pricode_chatgpt_create_image( trim($data['prompt']), $new_post_id );
     return wp_send_json( ['success' => true, 'message' => 'Post Created successfully!'] );
 
 }
+
+
+function pricode_chatgpt_create_image( $prompt, $new_post_id ){
+
+    $client = pricode_chatgpt_init();
+    $response = null;
+    try{
+        $response = $client->images()->create([
+            'prompt' => $prompt,
+            'n' => 1,
+            'size' => '1024x1024',
+            'response_format' => 'url',
+        ]);
+        
+        return pricodechatgpt_wp_save_image($response->data[0]->url, $new_post_id);
+    }catch(\Exception $e){
+        echo $e->getMessage();
+    }
+    
+    
+
+}
+
+function pricodechatgpt_wp_save_image( $imageurl, $new_post_id ){
+    include_once( ABSPATH . 'wp-admin/includes/image.php' );
+    $imagetype = end(explode('/', getimagesize($imageurl)['mime']));
+    $uniq_name = date('dmY').''.(int) microtime(true); 
+    $filename = $uniq_name.'.'.$imagetype;
+
+    $uploaddir = wp_upload_dir();
+    $uploadfile = $uploaddir['path'] . '/' . $filename;
+    $contents = file_get_contents($imageurl);
+    $savefile = fopen($uploadfile, 'w');
+
+    //Saving the image 
+    fwrite($savefile, $contents);
+    fclose($savefile);
+
+    $wp_filetype = wp_check_filetype(basename($filename), null );
+    $attachment = array(
+        'post_mime_type' => $wp_filetype['type'],
+        'post_title' => $filename,
+        'post_content' => '',
+        'post_status' => 'inherit'
+    );
+
+    $attachment_id = wp_insert_attachment( $attachment, $uploadfile );
+    $imagenew = get_post( $attachment_id );
+    $fullsizepath = get_attached_file( $imagenew->ID );
+    $attach_data = wp_generate_attachment_metadata( $attachment_id, $fullsizepath );
+    wp_update_attachment_metadata( $attachment_id, $attach_data ); 
+    set_post_thumbnail($new_post_id, $attachment_id);
+    return $attachment_id;    
+}
+
