@@ -40,8 +40,14 @@ function pricode_chatgpt_get_content( $prompt ){
     return $response;
 }
 
-function pricode_chatgpt_create_post( $prompt ){
-    
+function pricode_chatgpt_create_post( $prompt, $json_format = false, $prefix = false ){
+    if( $prefix ){
+        $prompt = "Hi can you please write a blog about " . $prompt; 
+    }
+    if( $json_format ){
+        $prompt .= $prompt . '. Please use the following json format { title, content: [ { heading, [paragraphs] } ] }';
+    }
+
     $content = pricode_chatgpt_get_content( $prompt );
     
     $blog_response = json_decode($content->choices[0]->message->content);
@@ -176,15 +182,24 @@ function pricode_chatgpt_ajax_response(){
         return wp_send_json( ['success' => false, 'message' => 'empty prompt'] );    
     }
 
-    $new_post_id = pricode_chatgpt_create_post( trim($data['prompt']) . '. Please use the following json format { title, content: [ { heading, [paragraphs] } ] }' );
-    if( is_wp_error( $new_post_id ) ){
-        return wp_send_json( ['success' => false, 'message' => 'Something went wrong'] );    
-    }
-    pricode_chatgpt_create_image( trim($data['prompt']), $new_post_id );
-    return wp_send_json( ['success' => true, 'message' => 'Post Created successfully!'] );
+    return pricode_chatgpt_create_new_post_and_image( $prompt );
 
 }
 
+function pricode_chatgpt_create_new_post_and_image( $prompt ){
+    $new_post_id = pricode_chatgpt_create_post( trim($prompt), true );
+    if( is_wp_error( $new_post_id ) ){
+        return wp_send_json( ['success' => false, 'message' => 'Something went wrong, Post was not created'] );    
+    }
+
+    $new_image_id = pricode_chatgpt_create_image( trim($prompt), $new_post_id );
+    
+    if( is_wp_error( $new_image_id ) ){
+        return wp_send_json( ['success' => false, 'message' => 'Something went wrong, Image was not created'] );    
+    }
+
+    return wp_send_json( ['success' => true, 'message' => 'Post and Image Created successfully!'] );
+}
 
 function pricode_chatgpt_create_image( $prompt, $new_post_id ){
 
@@ -231,11 +246,40 @@ function pricodechatgpt_wp_save_image( $imageurl, $new_post_id ){
     );
 
     $attachment_id = wp_insert_attachment( $attachment, $uploadfile );
-    $imagenew = get_post( $attachment_id );
-    $fullsizepath = get_attached_file( $imagenew->ID );
-    $attach_data = wp_generate_attachment_metadata( $attachment_id, $fullsizepath );
-    wp_update_attachment_metadata( $attachment_id, $attach_data ); 
-    set_post_thumbnail($new_post_id, $attachment_id);
+    if( !is_wp_error( $attachment_id ) ){
+        $imagenew = get_post( $attachment_id );
+        $fullsizepath = get_attached_file( $imagenew->ID );
+        $attach_data = wp_generate_attachment_metadata( $attachment_id, $fullsizepath );
+        wp_update_attachment_metadata( $attachment_id, $attach_data ); 
+        set_post_thumbnail($new_post_id, $attachment_id);
+    }
     return $attachment_id;    
 }
 
+
+//Cronjobs
+register_deactivation_hook( __FILE__, 'pricode_chatgpt_deactivate' );
+function pricode_chatgpt_deactivate() {
+    wp_clear_scheduled_hook( 'pricode_chatgpt_cron' );
+}
+add_action('init', function() {
+    add_action( 'pricode_chatgpt_cron', 'pricode_chatgpt_run_cron' );
+
+    if (! wp_next_scheduled ( 'pricode_chatgpt_cron' )) {
+        wp_schedule_event( time(), 'three_mins', 'pricode_chatgpt_cron' );
+    }
+});
+
+function pricode_chatgpt_run_cron(){
+    $topics = ['pizza napolitana', 'pizza margaretha',  'paella',  'sushi', 'turkish food']; 
+    return pricode_chatgpt_create_new_post_and_image( $topics[ rand(0, ( count($topics) - 1 ) ) ] );
+}
+
+function pricode_chatgpt_cron_schedules( $schedules ) {
+    $schedules['three_mins'] = array(
+        'interval' => 180,
+        'display' => __('3 mins')
+    );
+    return $schedules;
+}
+add_filter( 'cron_schedules', 'pricode_chatgpt_cron_schedules' );
