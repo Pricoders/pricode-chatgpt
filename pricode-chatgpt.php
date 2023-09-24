@@ -52,7 +52,6 @@ function pricode_chatgpt_create_post( $prompt, $json_format = false, $prefix = f
     
     $blog_response = json_decode($content->choices[0]->message->content);
     
-    error_log( print_r($blog_response,true ) );
     // blog data 
     if( isset($blog_response->title) && is_string($blog_response->title) ){
         $title = $blog_response->title;
@@ -62,7 +61,6 @@ function pricode_chatgpt_create_post( $prompt, $json_format = false, $prefix = f
     
     if( isset( $blog_response->content ) && is_array( $blog_response->content ) ){
         foreach ($blog_response->content as $key => $entry) {
-            error_log( print_r($entry,true ) );
             if( isset( $entry->heading ) ){
                 $content .= '<h2>' . $entry->heading . '</h2>';    
             }
@@ -77,7 +75,7 @@ function pricode_chatgpt_create_post( $prompt, $json_format = false, $prefix = f
     $new_post = array(
       'post_title'    => wp_strip_all_tags( $title ),
       'post_content'  => $content,
-      'post_status'   => 'publish',
+      'post_status'   => 'draft',
       'post_author'   => 1
     );
     return wp_insert_post( $new_post );
@@ -197,7 +195,7 @@ function pricode_chatgpt_create_new_post_and_image( $prompt ){
     if( is_wp_error( $new_image_id ) ){
         return wp_send_json( ['success' => false, 'message' => 'Something went wrong, Image was not created'] );    
     }
-
+    pricode_chatgpt_send_email_notification($new_post_id);
     return wp_send_json( ['success' => true, 'message' => 'Post and Image Created successfully!'] );
 }
 
@@ -218,8 +216,6 @@ function pricode_chatgpt_create_image( $prompt, $new_post_id ){
         echo $e->getMessage();
     }
     
-    
-
 }
 
 function pricodechatgpt_wp_save_image( $imageurl, $new_post_id ){
@@ -262,24 +258,33 @@ register_deactivation_hook( __FILE__, 'pricode_chatgpt_deactivate' );
 function pricode_chatgpt_deactivate() {
     wp_clear_scheduled_hook( 'pricode_chatgpt_cron' );
 }
-add_action('init', function() {
-    add_action( 'pricode_chatgpt_cron', 'pricode_chatgpt_run_cron' );
-
-    if (! wp_next_scheduled ( 'pricode_chatgpt_cron' )) {
-        wp_schedule_event( time(), 'three_mins', 'pricode_chatgpt_cron' );
-    }
-});
+add_action( 'pricode_chatgpt_cron', 'pricode_chatgpt_run_cron' );
+if ( !wp_next_scheduled ( 'pricode_chatgpt_cron' ) ) {
+    wp_schedule_event( time(), 'three_mins', 'pricode_chatgpt_cron' );
+}
+// add_action('init', function() {
+    
+// });
 
 function pricode_chatgpt_run_cron(){
     $topics = ['pizza napolitana', 'pizza margaretha',  'paella',  'sushi', 'turkish food']; 
-    return pricode_chatgpt_create_new_post_and_image( $topics[ rand(0, ( count($topics) - 1 ) ) ] );
+    $topic = $topics[ rand(0, ( count($topics) - 1 ) ) ];
+    return pricode_chatgpt_create_new_post_and_image( $topic );
 }
 
 function pricode_chatgpt_cron_schedules( $schedules ) {
     $schedules['three_mins'] = array(
-        'interval' => 180,
+        'interval' => 60,
         'display' => __('3 mins')
     );
     return $schedules;
 }
 add_filter( 'cron_schedules', 'pricode_chatgpt_cron_schedules' );
+
+function pricode_chatgpt_send_email_notification( $new_post_id ){
+    $headers = ['Content-Type: text/html; charset=UTF-8'];
+    $admin_email = get_option( 'admin_email' );
+    $title = "ChatGPT just created a post for your to review!";
+    $message = "Hey there is a new post created by chatgpt!!! here you can take a look of it >>> <a taget='_blank' href='" . admin_url("post.php?post=$new_post_id&action=edit") . "'> Edit post!</a>";
+    wp_mail($admin_email, $title, $message, $headers);
+}
