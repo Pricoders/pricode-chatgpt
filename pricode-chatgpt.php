@@ -260,7 +260,7 @@ function pricode_chatgpt_deactivate() {
 }
 add_action( 'pricode_chatgpt_cron', 'pricode_chatgpt_run_cron' );
 if ( !wp_next_scheduled ( 'pricode_chatgpt_cron' ) ) {
-    wp_schedule_event( time(), 'three_mins', 'pricode_chatgpt_cron' );
+    wp_schedule_event( time(), 'daily', 'pricode_chatgpt_cron' );
 }
 // add_action('init', function() {
     
@@ -274,7 +274,7 @@ function pricode_chatgpt_run_cron(){
 
 function pricode_chatgpt_cron_schedules( $schedules ) {
     $schedules['three_mins'] = array(
-        'interval' => 60,
+        'interval' => 180,
         'display' => __('3 mins')
     );
     return $schedules;
