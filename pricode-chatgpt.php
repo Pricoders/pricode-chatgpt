@@ -220,7 +220,9 @@ function pricode_chatgpt_create_image( $prompt, $new_post_id ){
 
 function pricodechatgpt_wp_save_image( $imageurl, $new_post_id ){
     include_once( ABSPATH . 'wp-admin/includes/image.php' );
-    $imagetype = end(explode('/', getimagesize($imageurl)['mime']));
+    $mimetype = getimagesize($imageurl)['mime'];
+    $types = explode( '/', $mimetype );
+    $imagetype = end( $types );
     $uniq_name = date('dmY').''.(int) microtime(true); 
     $filename = $uniq_name.'.'.$imagetype;
 
@@ -262,14 +264,21 @@ add_action( 'pricode_chatgpt_cron', 'pricode_chatgpt_run_cron' );
 if ( !wp_next_scheduled ( 'pricode_chatgpt_cron' ) ) {
     wp_schedule_event( time(), 'daily', 'pricode_chatgpt_cron' );
 }
-// add_action('init', function() {
-    
-// });
+
 
 function pricode_chatgpt_run_cron(){
-    $topics = ['pizza napolitana', 'pizza margaretha',  'paella',  'sushi', 'turkish food']; 
-    $topic = $topics[ rand(0, ( count($topics) - 1 ) ) ];
-    return pricode_chatgpt_create_new_post_and_image( $topic );
+
+    $post = get_posts([ 
+        'post_type' => 'topic', 
+        'posts_per_page' => 1, 
+        'fields' => 'ids',
+        'orderby' => 'rand',
+        'post_status' => 'publish'
+    ]);
+    if( intval($post[0]) > 0) {
+        return pricode_chatgpt_create_new_post_and_image( get_the_title($post[0]) );    
+    }
+    
 }
 
 function pricode_chatgpt_cron_schedules( $schedules ) {
@@ -288,3 +297,17 @@ function pricode_chatgpt_send_email_notification( $new_post_id ){
     $message = "Hey there is a new post created by chatgpt!!! here you can take a look of it >>> <a taget='_blank' href='" . admin_url("post.php?post=$new_post_id&action=edit") . "'> Edit post!</a>";
     wp_mail($admin_email, $title, $message, $headers);
 }
+
+function pricode_chatgpt_topcis_post_type() {
+    $args = array(
+        'public'    => false,
+        'label'     => __( 'Topics', 'textdomain' ),
+        'exclude_from_search' => true,
+        'publicly_queryable' => false,
+        'show_ui' => true,
+        'supports' => ['title', 'custom-fields']
+
+    );
+    register_post_type( 'topic', $args );
+}
+add_action( 'init', 'pricode_chatgpt_topcis_post_type' );
