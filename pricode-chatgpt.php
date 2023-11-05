@@ -224,7 +224,7 @@ function pricode_chatgpt_create_post_and_image( $topic ){
 
 }
 
-function pricode_chatgpt_create_image( $prompt, $new_post_id ){
+function pricode_chatgpt_set_new_image_new_post( $prompt, $new_post_id ){
 
     $client = pricode_chatgpt_init();
     $response = null;
@@ -283,9 +283,9 @@ function pricode_chatgpt_activate() {
 }
 register_activation_hook( __FILE__, 'pricode_chatgpt_activate' );
 
-add_action( 'pricode_chatgpt_cron', 'pricode_chatgpt_run_cron' );
-if ( !wp_next_scheduled ( 'pricode_chatgpt_cron' ) ) {
-    wp_schedule_event( time(), 'daily', 'pricode_chatgpt_cron' );
+add_action( 'pricode_chatgpt_cron_youtube', 'pricode_chatgpt_run_cron' );
+if ( !wp_next_scheduled ( 'pricode_chatgpt_cron_youtube' ) ) {
+    wp_schedule_event( time(), 'daily', 'pricode_chatgpt_cron_youtube' );
 }
 
 
@@ -309,7 +309,7 @@ function pricode_chatgpt_cron_schedules( $schedules ) {
 }
 add_filter( 'cron_schedules', 'pricode_chatgpt_cron_schedules' );
 
-function pricode_chatgpt_send_email_notification( $new_post_id ){
+function pricode_chatgpt_send_notification( $new_post_id ){
     $headers = ['Content-Type: text/html; charset=UTF-8'];
     $admin_email = get_option( 'admin_email' );
     $title = "ChatGPT just created a post for your to review!";
