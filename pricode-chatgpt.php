@@ -104,6 +104,24 @@ function pricode_chatgpt_menus() {
         'pricode_chatgpt_publish_post_callback'
     );
 
+    // Topics
+    add_submenu_page(
+        'pricode-chatgpt-settings',
+        __( 'Topics', 'pricode-chatgpt' ),
+        __( 'Topics', 'pricode-chatgpt' ),
+        'manage_options',
+        'pricode-chatgpt-topics',
+        'pricode_chatgpt_publish_topics_callback'
+    );
+    //Logs
+    add_submenu_page(
+        'pricode-chatgpt-settings',
+        __( 'Logs', 'pricode-chatgpt' ),
+        __( 'Logs', 'pricode-chatgpt' ),
+        'manage_options',
+        'pricode-chatgpt-logs',
+        'pricode_chatgpt_publish_logs_callback'
+    );
     //Register settings
     add_action( 'admin_init', 'pricode_chatgpt_register_settings' );
 
@@ -184,19 +202,26 @@ function pricode_chatgpt_ajax_response(){
 
 }
 
-function pricode_chatgpt_create_new_post_and_image( $prompt ){
-    $new_post_id = pricode_chatgpt_create_post( trim($prompt), true );
-    if( is_wp_error( $new_post_id ) ){
-        return wp_send_json( ['success' => false, 'message' => 'Something went wrong, Post was not created'] );    
-    }
-
-    $new_image_id = pricode_chatgpt_create_image( trim($prompt), $new_post_id );
+function pricode_chatgpt_create_post_and_image( $topic ){
+    $prompt = $topic->topic;
+    $new_post_id = pricode_chatgpt_create_post($prompt, true, true );
     
-    if( is_wp_error( $new_image_id ) ){
-        return wp_send_json( ['success' => false, 'message' => 'Something went wrong, Image was not created'] );    
+    if( is_wp_error($new_post_id) ){
+        pricode_chatgpt_insert_log('pricode_chatgpt_create_post_and_image', 0, 'Post was not created');
+        return wp_send_json( [ 'success' => false, 'message' => 'Oops, something happened. Post was not created' ] );
     }
-    pricode_chatgpt_send_email_notification($new_post_id);
-    return wp_send_json( ['success' => true, 'message' => 'Post and Image Created successfully!'] );
+    //Adding image
+    $attachment_id = pricode_chatgpt_set_new_image_new_post( $prompt, $new_post_id );
+    if( is_wp_error($attachment_id) ){
+        pricode_chatgpt_insert_log('pricode_chatgpt_create_post_and_image', 0, 'Images was not created');
+        return wp_send_json( [ 'success' => false, 'message' => 'Oops, something happened. Image was not created' ] );
+    }
+    pricode_chatgpt_send_notification( $new_post_id );
+    pricode_chatgpt_insert_log('pricode_chatgpt_create_post_and_image', 1, 'Post and Iamge was created');
+
+    pricode_chatgpt_update_topic_time( $topic );
+    return wp_send_json( [ 'success' => true, 'message' => 'New post and image created!' ] );
+
 }
 
 function pricode_chatgpt_create_image( $prompt, $new_post_id ){
@@ -253,13 +278,11 @@ function pricodechatgpt_wp_save_image( $imageurl, $new_post_id ){
     }
     return $attachment_id;    
 }
-
-
-//Cronjobs
-register_deactivation_hook( __FILE__, 'pricode_chatgpt_deactivate' );
-function pricode_chatgpt_deactivate() {
-    wp_clear_scheduled_hook( 'pricode_chatgpt_cron' );
+function pricode_chatgpt_activate() {
+    pricode_chatgpt_db_deltas();
 }
+register_activation_hook( __FILE__, 'pricode_chatgpt_activate' );
+
 add_action( 'pricode_chatgpt_cron', 'pricode_chatgpt_run_cron' );
 if ( !wp_next_scheduled ( 'pricode_chatgpt_cron' ) ) {
     wp_schedule_event( time(), 'daily', 'pricode_chatgpt_cron' );
@@ -268,15 +291,11 @@ if ( !wp_next_scheduled ( 'pricode_chatgpt_cron' ) ) {
 
 function pricode_chatgpt_run_cron(){
 
-    $post = get_posts([ 
-        'post_type' => 'topic', 
-        'posts_per_page' => 1, 
-        'fields' => 'ids',
-        'orderby' => 'rand',
-        'post_status' => 'publish'
-    ]);
-    if( intval($post[0]) > 0) {
-        return pricode_chatgpt_create_new_post_and_image( get_the_title($post[0]) );    
+    $topic = pricode_chatgpt_get_random_topic();
+    if( !empty($topic[0]->topic) ){
+
+        pricode_chatgpt_insert_log('pricode_chatgpt_run', 1, 'Cronjob has been started');
+        return pricode_chatgpt_create_post_and_image( $topic[0] );    
     }
     
 }
@@ -310,4 +329,147 @@ function pricode_chatgpt_topcis_post_type() {
     );
     register_post_type( 'topic', $args );
 }
-add_action( 'init', 'pricode_chatgpt_topcis_post_type' );
+// add_action( 'init', 'pricode_chatgpt_topcis_post_type' );
+
+
+function pricode_chatgpt_publish_logs_callback(){
+    $logs = pricode_chatgpt_get_logs();
+    include_once 'templates/logs.php';
+}
+
+function pricode_chatgpt_publish_topics_callback(){
+    $topics = pricode_chatgpt_get_topics();
+    include_once 'templates/topics.php';
+}
+
+
+register_activation_hook( __FILE__, 'pricode_chatgpt_db_deltas' );
+function pricode_chatgpt_db_deltas(){
+    global $wpdb;
+    require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+    dbDelta( pricode_chatgpt_sql_log_create( $wpdb->prefix . 'pricode_chatgpt_logs' ) );
+    dbDelta( pricode_chatgpt_sql_topic_create( $wpdb->prefix . 'pricode_chatgpt_topics' ) );
+
+}
+function pricode_chatgpt_sql_log_create( $table_name ){
+    global $wpdb;
+    return 
+    "CREATE TABLE {$table_name} (
+        id mediumint(8) unsigned NOT NULL auto_increment ,
+        event_name varchar(100) NOT NULL,
+        event_type BOOL NOT NULL,
+        description TEXT NULL,
+        created_at INT NOT NULL,
+        PRIMARY KEY  (id)
+        )
+    COLLATE {$wpdb->collate}";
+}
+function pricode_chatgpt_sql_topic_create( $table_name ){
+
+    global $wpdb;
+    return 
+    "CREATE TABLE {$table_name} (
+        id mediumint(8) unsigned NOT NULL auto_increment ,
+        topic varchar(100) NOT NULL,
+        last_published INT NULL default(0),
+        created_at INT NOT NULL,
+        updated_at INT NOT NULL,
+        PRIMARY KEY  (id)
+        )
+    COLLATE {$wpdb->collate}";
+
+}
+
+register_deactivation_hook( __FILE__, 'pricode_chatgpt_db_delta_remove' );
+
+function pricode_chatgpt_db_delta_remove(){
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'pricode_chatgpt_logs';
+    $wpdb->query( "DROP TABLE IF EXISTS {$table_name}");
+    $table_name = $wpdb->prefix . 'pricode_chatgpt_topics';
+    $wpdb->query( "DROP TABLE IF EXISTS {$table_name}");
+    wp_clear_scheduled_hook( 'pricode_chatgpt_cron' );
+}
+
+
+function pricode_chatgpt_insert_log( $name, $type, $description ){
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'pricode_chatgpt_logs';
+    $wpdb->insert($table_name, array(
+        'event_name' => $name,
+        'event_type' => $type,
+        'description' => $description,
+        'created_at' => time()
+    ));
+
+}
+
+function pricode_chatgpt_insert_topic( $topic ){
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'pricode_chatgpt_topics';
+    $wpdb->insert($table_name, array(
+        'topic' => $topic,
+        'created_at' => time(),
+        'updated_at' => time()
+    ));
+
+}
+
+
+function pricode_chatgpt_get_logs(){
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'pricode_chatgpt_logs';
+    $logs = $wpdb->get_results(
+        "
+            SELECT * 
+            FROM {$table_name}
+            LIMIT 50
+        "
+    );
+
+    return $logs;
+
+}
+function pricode_chatgpt_get_topics(){
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'pricode_chatgpt_topics';
+    $topics = $wpdb->get_results(
+        "
+            SELECT * 
+            FROM {$table_name}
+            LIMIT 50
+        "
+    );
+
+    return $topics;
+
+}
+function pricode_chatgpt_get_random_topic(){
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'pricode_chatgpt_topics';
+    $time = time();
+    $topic = $wpdb->get_results(
+        "
+            SELECT * 
+            FROM {$table_name}
+            WHERE ( {$time} - last_published ) > 86400
+            ORDER BY rand() 
+            LIMIT 1
+        "
+    );
+
+    return $topic;
+
+}
+function pricode_chatgpt_update_topic_time( $topic ){
+    global $wpdb;
+
+    $table_name = $wpdb->prefix . 'pricode_chatgpt_topics';
+    $wpdb->update(
+        $table_name,
+        array(
+            'last_published' => time(), // string
+        ),
+        array( 'id' => $topic->id ),
+    );
+}
