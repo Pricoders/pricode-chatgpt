@@ -407,13 +407,12 @@ function pricode_chatgpt_insert_log( $name, $type, $description ){
 function pricode_chatgpt_insert_topic( $topic ){
     global $wpdb;
     $table_name = $wpdb->prefix . 'pricode_chatgpt_topics';
-    $wpdb->insert($table_name, array(
+    return $wpdb->insert($table_name, array(
         'topic' => $topic,
         'created_at' => time(),
         'updated_at' => time()
     ));
-
-}
+}   
 
 
 function pricode_chatgpt_get_logs(){
@@ -472,4 +471,28 @@ function pricode_chatgpt_update_topic_time( $topic ){
         ),
         array( 'id' => $topic->id ),
     );
+}
+
+
+add_action('wp_ajax_pricode_add_topic', 'pricode_chatgpt_add_topic_callback');
+
+function pricode_chatgpt_add_topic_callback(){
+    parse_str($_POST['data'], $data);
+    error_log( print_r( $data, true ) );
+    if ( ! wp_verify_nonce($data['pricode_add_topic_nonce'], 'pricode_add_topic') ){
+        return wp_send_json( ['success' => false, 'message' => 'Incorrect data'] );    
+    }
+    if( empty( $data['new_topic'] ) ) {
+        return wp_send_json( ['success' => false, 'message' => 'empty prompt'] );    
+    }
+
+    $return =  pricode_chatgpt_insert_topic( $data['new_topic'] );
+    error_log( print_r( $return, true ) );
+    if( is_wp_error( $return ) ){
+        return wp_send_json( ['success' => false, 'message' => 'error'] );    
+    }else{
+        return wp_send_json( ['success' => true, 'message' => 'New Topic added'] );    
+    }
+
+
 }
